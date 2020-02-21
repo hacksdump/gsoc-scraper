@@ -1,6 +1,7 @@
 import scrapy
 from datetime import datetime
 from peewee import SqliteDatabase, Model, CharField, ForeignKeyField, IntegerField
+from fuzzywuzzy import fuzz
 
 
 class OrgSpider(scrapy.Spider):
@@ -10,6 +11,7 @@ class OrgSpider(scrapy.Spider):
         since_2016="https://summerofcode.withgoogle.com",
     )
     db_name = "orgs.db"
+    in_memory_org_list = []
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -36,8 +38,33 @@ class OrgSpider(scrapy.Spider):
         self._OrgModel = Org
         self._ProjectCountModel = ProjectCount
 
-    def add_org(self, name):
-        return self._OrgModel.get_or_create(name=name)[0]
+    @staticmethod
+    def clean_string(unclean_string):
+        return "".join(char for char in unclean_string if char is not ' ').lower()
+
+    def add_org(self, insert_name, insert_year):
+        """
+        add unique orgs in db
+        fuzzy matching needs to be done since gsoc somehow doesn't
+        maintain consistency in org names like misplaced whitespace
+        or string case inconsistencies.
+        :param insert_name: name of the org
+        :param insert_year: year of org name entry
+        :return: id of org in org table
+        """
+        fuzz_threshold = 95
+        cleaned_insert_name = self.clean_string(insert_name)
+        for idx, org in enumerate(self.in_memory_org_list):
+            existing_org_name = org['name']
+            cleaned_existing_org_name = self.clean_string(existing_org_name)
+            if fuzz.ratio(cleaned_existing_org_name, cleaned_insert_name) > fuzz_threshold:
+                added_year = org['year']
+                if insert_year > added_year:
+                    self.in_memory_org_list[idx].update(name=insert_name, year=insert_year)
+                return org['id']
+        new_org_obj = self._OrgModel.create(name=insert_name)
+        self.in_memory_org_list.append(dict(id=new_org_obj, name=insert_name, year=insert_year))
+        return new_org_obj
 
     def add_project_count(self, org_object, year, count):
         self._ProjectCountModel.create(org=org_object, year=year, count=count)
@@ -67,7 +94,7 @@ class OrgSpider(scrapy.Spider):
         org_name = response.css('h3::text').get()
         projects = response.css('ul.mdl-list').css('li')
         project_count = len(projects)
-        org_object = self.add_org(org_name)
+        org_object = self.add_org(org_name, year)
         self.add_project_count(org_object, year, project_count)
 
     def parse_since_2016(self, response):
@@ -85,5 +112,5 @@ class OrgSpider(scrapy.Spider):
         org_name = response.css('h3.banner__title::text').get()
         projects = response.css('ul.project-list-container').css('li')
         project_count = len(projects)
-        org_object = self.add_org(org_name)
+        org_object = self.add_org(org_name, year)
         self.add_project_count(org_object, year, project_count)
