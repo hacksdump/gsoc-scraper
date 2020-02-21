@@ -42,6 +42,18 @@ class OrgSpider(scrapy.Spider):
     def clean_string(unclean_string):
         return "".join(char for char in unclean_string if char is not ' ').lower()
 
+    @staticmethod
+    def is_fuzzy_matching(string_one, string_two, threshold):
+        cleaned_string_one = OrgSpider.clean_string(string_one)
+        cleaned_string_two = OrgSpider.clean_string(string_two)
+        return fuzz.ratio(cleaned_string_one, cleaned_string_two) > threshold
+
+    @staticmethod
+    def is_token_part_of_string(token, string):
+        token = token.lower()
+        string = string.lower()
+        return token in string.split(' ')
+
     def add_org(self, insert_name, insert_year):
         """
         add unique orgs in db
@@ -53,11 +65,12 @@ class OrgSpider(scrapy.Spider):
         :return: id of org in org table
         """
         fuzz_threshold = 95
-        cleaned_insert_name = self.clean_string(insert_name)
         for idx, org in enumerate(self.in_memory_org_list):
             existing_org_name = org['name']
-            cleaned_existing_org_name = self.clean_string(existing_org_name)
-            if fuzz.ratio(cleaned_existing_org_name, cleaned_insert_name) > fuzz_threshold:
+            if self.is_fuzzy_matching(insert_name, existing_org_name, fuzz_threshold)\
+                    or (len(existing_org_name) != len(insert_name)
+                        and (self.is_token_part_of_string(existing_org_name, insert_name)
+                             or self.is_token_part_of_string(insert_name, existing_org_name))):
                 added_year = org['year']
                 if insert_year > added_year:
                     self.in_memory_org_list[idx].update(name=insert_name, year=insert_year)
