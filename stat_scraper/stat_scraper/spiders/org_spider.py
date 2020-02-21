@@ -1,5 +1,6 @@
 import scrapy
 from datetime import datetime
+from peewee import SqliteDatabase, Model, CharField, ForeignKeyField, IntegerField
 
 
 class OrgSpider(scrapy.Spider):
@@ -8,6 +9,38 @@ class OrgSpider(scrapy.Spider):
         pre_2016="https://www.google-melange.com",
         since_2016="https://summerofcode.withgoogle.com",
     )
+    db_name = "orgs.db"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        db = SqliteDatabase(self.db_name)
+
+        class BaseModel(Model):
+            class Meta:
+                database = db
+
+        class Org(BaseModel):
+            name = CharField(unique=True)
+
+        class ProjectCount(BaseModel):
+            org = ForeignKeyField(Org)
+            year = IntegerField()
+            count = IntegerField()
+
+        models = [Org, ProjectCount]
+
+        db.connect()
+        db.drop_tables(models)
+        db.create_tables(models)
+
+        self._OrgModel = Org
+        self._ProjectCountModel = ProjectCount
+
+    def add_org(self, name):
+        return self._OrgModel.get_or_create(name=name)[0]
+
+    def add_project_count(self, org_object, year, count):
+        self._ProjectCountModel.create(org=org_object, year=year, count=count)
 
     def start_requests(self):
         this_year = datetime.now().year
@@ -33,7 +66,9 @@ class OrgSpider(scrapy.Spider):
         year = response.meta['year']
         org_name = response.css('h3::text').get()
         projects = response.css('ul.mdl-list').css('li')
-        print(year, org_name, len(projects))
+        project_count = len(projects)
+        org_object = self.add_org(org_name)
+        self.add_project_count(org_object, year, project_count)
 
     def parse_since_2016(self, response):
         org_list_elements = response.css('li.organization-card__container')
@@ -49,4 +84,6 @@ class OrgSpider(scrapy.Spider):
         year = response.meta['year']
         org_name = response.css('h3.banner__title::text').get()
         projects = response.css('ul.project-list-container').css('li')
-        print(year, org_name, len(projects))
+        project_count = len(projects)
+        org_object = self.add_org(org_name)
+        self.add_project_count(org_object, year, project_count)
